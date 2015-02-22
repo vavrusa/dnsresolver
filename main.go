@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/miekg/dns"
 	"log"
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -17,19 +19,45 @@ var (
 	finished      = make(chan *Job, 100)
 	done          = make(chan bool)
 	workersCount  = 32
+	appendDot     = true
 	dnsServer     = "8.8.8.8"
 	dnsPort       = "53"
 	dnsServerPort = ""
+	dnsClient     = &dns.Client{}
+	dnsTypes      = map[string]uint16{
+		"MX":   dns.TypeMX,
+		"A":    dns.TypeA,
+		"AAAA": dns.TypeAAAA,
+	}
 )
 
 func main() {
 	flag.StringVar(&dnsServer, "server", dnsServer, "The resolver to ask")
-	flag.IntVar(&workersCount, "workers", workersCount, "Number of worker routines per CPU core")
+	flag.IntVar(&workersCount, "workers", workersCount, "Number of worker routines")
+	flag.BoolVar(&appendDot, "append-dot", appendDot, "Append missing dot to domains")
 	timeout := flag.Int("timeout", 5, "Timeout for a query in seconds")
 	flag.Parse()
 
-	dnsServerPort = net.JoinHostPort(dnsServer, dnsPort)
+	queryTypes := []uint16{}
+	for _, arg := range flag.Args() {
+		if t, ok := dnsTypes[arg]; ok {
+			log.Println("Query for", arg, "records")
+			queryTypes = append(queryTypes, t)
+		} else {
+			fmt.Fprintln(os.Stderr, "invalid query type:", arg)
+			os.Exit(1)
+		}
+	}
 
+	if len(queryTypes) == 0 {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] TYPE\n\nOptions:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "\nType can be A, AAAA, MX\n")
+		fmt.Fprintf(os.Stderr, "Example: echo example.com. | %s A AAAA\n", os.Args[0])
+		os.Exit(1)
+	}
+
+	dnsServerPort = net.JoinHostPort(dnsServer, dnsPort)
 	dnsClient.ReadTimeout = time.Duration(*timeout) * time.Second
 
 	// Use all cores
@@ -43,7 +71,7 @@ func main() {
 
 	// Start workers
 	for i := 0; i < workersCount; i++ {
-		go worker()
+		go worker(queryTypes)
 	}
 
 	createJobs()
@@ -55,16 +83,20 @@ func main() {
 func createJobs() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		pending <- &Job{Domain: scanner.Text()}
+		domain := scanner.Text()
+		if appendDot && !strings.HasSuffix(domain, ".") {
+			domain = fmt.Sprintf("%s.", domain)
+		}
+		pending <- &Job{Domain: domain}
 	}
 	close(pending)
 }
 
-func worker() {
+func worker(queryTypes []uint16) {
 	for {
 		job := <-pending
 		if job != nil {
-			executeJob(job)
+			executeJob(job, queryTypes)
 			finished <- job
 		} else {
 			// no more jobs to do
@@ -75,13 +107,13 @@ func worker() {
 	}
 }
 
-func executeJob(job *Job) {
-	results, duration, err := lookup(fmt.Sprintf("%s.", job.Domain))
-	job.Duration = int(duration / time.Millisecond)
-	if err == nil {
-		job.Results = results
-	} else {
-		job.Error = err.Error()
+func executeJob(job *Job, queryTypes []uint16) {
+	for _, q := range queryTypes {
+		if err := lookup(job, q); err != nil {
+			log.Printf("%s: %s", job.Domain, err)
+			job.Error = err.Error()
+			return
+		}
 	}
 }
 

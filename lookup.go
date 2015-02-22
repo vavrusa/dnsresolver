@@ -6,20 +6,17 @@ import (
 	"time"
 )
 
-var dnsClient = &dns.Client{}
-
 // Returns
-func lookup(domain string) (records []string, duration time.Duration, err error) {
+func lookup(job *Job, dnsType uint16) (err error) {
+	//result, err := unboundCtx.Resolve(job.Domain, dns.TypeA, dns.ClassINET)
 	m := &dns.Msg{}
 	m.RecursionDesired = true
-	m.SetQuestion(domain, dns.TypeMX)
-
-	result := &dns.Msg{}
+	m.SetQuestion(job.Domain, dnsType)
 
 	// execute the query
 	start := time.Now()
-	result, _, err = dnsClient.Exchange(m, dnsServerPort)
-	duration = time.Since(start)
+	result, _, err := dnsClient.Exchange(m, dnsServerPort)
+	job.Duration += int(time.Since(start) / time.Millisecond)
 
 	// error or NXDomain rcode?
 	if err != nil || result.Rcode == dns.RcodeNameError {
@@ -32,10 +29,17 @@ func lookup(domain string) (records []string, duration time.Duration, err error)
 		return
 	}
 
-	// Add addresses to result
 	for _, a := range result.Answer {
+		// TODO make this more DRY
+
 		if record, ok := a.(*dns.MX); ok {
-			records = append(records, record.Mx)
+			job.Results = append(job.Results, record.Mx)
+		}
+		if record, ok := a.(*dns.A); ok {
+			job.Results = append(job.Results, record.A.String())
+		}
+		if record, ok := a.(*dns.AAAA); ok {
+			job.Results = append(job.Results, record.AAAA.String())
 		}
 	}
 
