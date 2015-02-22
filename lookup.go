@@ -2,24 +2,31 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"github.com/miekg/dns"
+	"github.com/miekg/unbound"
 	"time"
 )
 
+var unboundCtx = unbound.New()
+
 // Returns
 func lookup(job *Job, dnsType uint16) (err error) {
-	//result, err := unboundCtx.Resolve(job.Domain, dns.TypeA, dns.ClassINET)
-	m := &dns.Msg{}
-	m.RecursionDesired = true
-	m.SetQuestion(job.Domain, dnsType)
-
 	// execute the query
 	start := time.Now()
-	result, _, err := dnsClient.Exchange(m, dnsServerPort)
+	result, err := unboundCtx.Resolve(job.Domain, dnsType, dns.ClassINET)
 	job.Duration += int(time.Since(start) / time.Millisecond)
 
+	if result.Bogus {
+		job.Security = fmt.Sprintf("bogus: %s", result.WhyBogus)
+	} else if result.Secure {
+		job.Security = "secure"
+	} else {
+		job.Security = "insecure"
+	}
+
 	// error or NXDomain rcode?
-	if err != nil || result.Rcode == dns.RcodeNameError {
+	if err != nil || result.NxDomain {
 		return
 	}
 
@@ -29,16 +36,15 @@ func lookup(job *Job, dnsType uint16) (err error) {
 		return
 	}
 
-	for _, a := range result.Answer {
-		// TODO make this more DRY
-
-		if record, ok := a.(*dns.MX); ok {
+	for i, _ := range result.Data {
+		rr := result.Rr[i]
+		if record, ok := rr.(*dns.MX); ok {
 			job.Results = append(job.Results, record.Mx)
 		}
-		if record, ok := a.(*dns.A); ok {
+		if record, ok := rr.(*dns.A); ok {
 			job.Results = append(job.Results, record.A.String())
 		}
-		if record, ok := a.(*dns.AAAA); ok {
+		if record, ok := rr.(*dns.AAAA); ok {
 			job.Results = append(job.Results, record.AAAA.String())
 		}
 	}

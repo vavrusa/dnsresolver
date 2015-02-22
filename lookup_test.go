@@ -5,8 +5,6 @@ import (
 )
 
 func TestCheckMX(t *testing.T) {
-	dnsServerPort = "8.8.8.8:53"
-
 	job := &Job{Domain: "ripe.net."}
 	err := lookup(job, dnsTypes["MX"])
 
@@ -31,8 +29,6 @@ func TestCheckMX(t *testing.T) {
 }
 
 func TestCheckNoMX(t *testing.T) {
-	dnsServerPort = "8.8.8.8:53"
-
 	job := &Job{Domain: "example.com."}
 	err := lookup(job, dnsTypes["MX"])
 
@@ -52,8 +48,6 @@ func TestCheckNoMX(t *testing.T) {
 }
 
 func TestCheckA(t *testing.T) {
-	dnsServerPort = "8.8.8.8:53"
-
 	job := &Job{Domain: "example.com."}
 	err := lookup(job, dnsTypes["A"])
 
@@ -69,5 +63,26 @@ func TestCheckA(t *testing.T) {
 
 	if job.Results[0] != "93.184.216.34" {
 		t.Error("invalid address returned")
+		return
+	}
+
+	if job.Security != "insecure" {
+		t.Error("invalid security: ", job.Security)
+		return
+	}
+}
+
+func TestCheckA_secure(t *testing.T) {
+	job := &Job{Domain: "sigok.verteiltesysteme.net"}
+	err := lookup(job, dnsTypes["A"])
+
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	if job.Security != "secure" {
+		t.Error("invalid security: ", job.Security)
+		return
 	}
 }

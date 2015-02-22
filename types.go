@@ -7,4 +7,5 @@ type Job struct {
 	Results  []string `json:"results"`
 	Duration int      `json:"duration"` // in ms
 	Error    string   `json:"error"`
+	Security string   `json:"security"`
 }

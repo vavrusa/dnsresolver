@@ -7,24 +7,18 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"log"
-	"net"
 	"os"
 	"runtime"
-	"strings"
-	"time"
 )
 
 var (
-	pending       = make(chan *Job, 100)
-	finished      = make(chan *Job, 100)
-	done          = make(chan bool)
-	workersCount  = 32
-	appendDot     = true
-	dnsServer     = "8.8.8.8"
-	dnsPort       = "53"
-	dnsServerPort = ""
-	dnsClient     = &dns.Client{}
-	dnsTypes      = map[string]uint16{
+	pending      = make(chan *Job, 100)
+	finished     = make(chan *Job, 100)
+	done         = make(chan bool)
+	workersCount = 32
+	debug        = 0
+	tafile       = ""
+	dnsTypes     = map[string]uint16{
 		"MX":   dns.TypeMX,
 		"A":    dns.TypeA,
 		"AAAA": dns.TypeAAAA,
@@ -32,10 +26,10 @@ var (
 )
 
 func main() {
-	flag.StringVar(&dnsServer, "server", dnsServer, "The resolver to ask")
 	flag.IntVar(&workersCount, "workers", workersCount, "Number of worker routines")
-	flag.BoolVar(&appendDot, "append-dot", appendDot, "Append missing dot to domains")
-	timeout := flag.Int("timeout", 5, "Timeout for a query in seconds")
+	flag.StringVar(&tafile, "tafile", tafile, "Path to trusted anchor file for DNSSEC")
+	flag.IntVar(&debug, "debug", debug, "Debug level for libunbound")
+	// timeout := flag.Int("timeout", 5, "Timeout for a query in seconds")
 	flag.Parse()
 
 	queryTypes := []uint16{}
@@ -45,7 +39,7 @@ func main() {
 			queryTypes = append(queryTypes, t)
 		} else {
 			fmt.Fprintln(os.Stderr, "invalid query type:", arg)
-			os.Exit(1)
+			os.Exit(2)
 		}
 	}
 
@@ -57,14 +51,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	dnsServerPort = net.JoinHostPort(dnsServer, dnsPort)
-	dnsClient.ReadTimeout = time.Duration(*timeout) * time.Second
+	// Set debug level
+	unboundCtx.DebugLevel(debug)
+
+	// Set trust anchor
+	if tafile != "" {
+		if err := unboundCtx.AddTaFile(tafile); err != nil {
+			log.Fatalf("error %s\n", err.Error())
+			os.Exit(3)
+		}
+	}
 
 	// Use all cores
 	cpuCount := runtime.NumCPU()
 	runtime.GOMAXPROCS(cpuCount)
 	log.Println("Using", cpuCount, "threads")
 	log.Println("Starting", workersCount, "workers")
+
+	unboundCtx.SetOption("num-threads", string(cpuCount))
 
 	// Start result writer
 	go resultWriter()
@@ -83,11 +87,7 @@ func main() {
 func createJobs() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		domain := scanner.Text()
-		if appendDot && !strings.HasSuffix(domain, ".") {
-			domain = fmt.Sprintf("%s.", domain)
-		}
-		pending <- &Job{Domain: domain}
+		pending <- &Job{Domain: scanner.Text()}
 	}
 	close(pending)
 }
