@@ -22,6 +22,7 @@ var (
 		"MX":   dns.TypeMX,
 		"A":    dns.TypeA,
 		"AAAA": dns.TypeAAAA,
+		"TLSA": dns.TypeTLSA,
 	}
 )
 
@@ -46,7 +47,7 @@ func main() {
 	if len(queryTypes) == 0 {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] TYPE\n\nOptions:\n", os.Args[0])
 		flag.PrintDefaults()
-		fmt.Fprintln(os.Stderr, "\nType can be A, AAAA, MX\n")
+		fmt.Fprintln(os.Stderr, "\nType can be A, AAAA, MX, TLSA\n")
 		fmt.Fprintf(os.Stderr, "Example: echo example.com. | %s A AAAA\n", os.Args[0])
 		os.Exit(1)
 	}

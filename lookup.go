@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"github.com/miekg/unbound"
+	"strconv"
 	"time"
 )
 
@@ -46,6 +47,12 @@ func lookup(job *Job, dnsType uint16) (err error) {
 		}
 		if record, ok := rr.(*dns.AAAA); ok {
 			job.Results = append(job.Results, record.AAAA.String())
+		}
+		if record, ok := rr.(*dns.TLSA); ok {
+			job.Results = append(job.Results, strconv.Itoa(int(record.Usage))+
+				" "+strconv.Itoa(int(record.Selector))+
+				" "+strconv.Itoa(int(record.MatchingType))+
+				" "+record.Certificate)
 		}
 	}
 

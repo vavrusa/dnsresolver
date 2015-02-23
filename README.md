@@ -14,7 +14,7 @@ Options:
   -tafile="": Path to trusted anchor file for DNSSEC
   -debug=0: Debug level for libunbound
 
-Type can be A, AAAA, MX
+Type can be A, AAAA, MX, TLSA
 ```
 
 If you want the resolver to use DNSSEC validation, please provide the root trust anchor (tafile).
