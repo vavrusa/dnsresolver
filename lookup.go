@@ -38,17 +38,14 @@ func lookup(job *Job, dnsType uint16) (err error) {
 	}
 
 	for i, _ := range result.Data {
-		rr := result.Rr[i]
-		if record, ok := rr.(*dns.MX); ok {
+		switch record := result.Rr[i].(type) {
+		case *dns.MX:
 			job.Results = append(job.Results, record.Mx)
-		}
-		if record, ok := rr.(*dns.A); ok {
+		case *dns.A:
 			job.Results = append(job.Results, record.A.String())
-		}
-		if record, ok := rr.(*dns.AAAA); ok {
+		case *dns.AAAA:
 			job.Results = append(job.Results, record.AAAA.String())
-		}
-		if record, ok := rr.(*dns.TLSA); ok {
+		case *dns.TLSA:
 			job.Results = append(job.Results, strconv.Itoa(int(record.Usage))+
 				" "+strconv.Itoa(int(record.Selector))+
 				" "+strconv.Itoa(int(record.MatchingType))+
