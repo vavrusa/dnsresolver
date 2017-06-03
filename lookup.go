@@ -2,8 +2,9 @@ package main
 
 import (
 	"errors"
-	"github.com/miekg/dns"
 	"time"
+
+	"github.com/miekg/dns"
 )
 
 // Returns
@@ -30,15 +31,12 @@ func lookup(job *Job, dnsType uint16) (err error) {
 	}
 
 	for _, a := range result.Answer {
-		// TODO make this more DRY
-
-		if record, ok := a.(*dns.MX); ok {
+		switch record := a.(type) {
+		case *dns.MX:
 			job.Results = append(job.Results, record.Mx)
-		}
-		if record, ok := a.(*dns.A); ok {
+		case *dns.A:
 			job.Results = append(job.Results, record.A.String())
-		}
-		if record, ok := a.(*dns.AAAA); ok {
+		case *dns.AAAA:
 			job.Results = append(job.Results, record.AAAA.String())
 		}
 	}
