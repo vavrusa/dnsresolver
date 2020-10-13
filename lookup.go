@@ -8,20 +8,30 @@ import (
 )
 
 // Returns
-func lookup(job *Job, dnsType uint16) (err error) {
+func lookup(job *Job, dnsType uint16, conn **dns.Conn) (err error) {
 	//result, err := unboundCtx.Resolve(job.Domain, dns.TypeA, dns.ClassINET)
 	m := &dns.Msg{}
 	m.RecursionDesired = true
 	m.SetQuestion(job.Domain, dnsType)
 
 	// execute the query
+	var result *dns.Msg
 	start := time.Now()
-	result, _, err := dnsClient.Exchange(m, dnsServerPort)
+	result, _, err = exchange(m, *conn)
 	job.Duration += int(time.Since(start) / time.Millisecond)
 
 	// error or NXDomain rcode?
 	if err != nil || result.Rcode == dns.RcodeNameError {
-		return
+		if *conn != nil {
+			// reconnect
+			c, _ := dnsClient.Dial(dnsServerPort)
+			*conn = c
+			// retry without connection
+			result, _, err = exchange(m, nil)
+		}
+		if err != nil {
+			return	
+		}
 	}
 
 	// Other erroneous rcode?
@@ -38,8 +48,18 @@ func lookup(job *Job, dnsType uint16) (err error) {
 			job.Results = append(job.Results, record.A.String())
 		case *dns.AAAA:
 			job.Results = append(job.Results, record.AAAA.String())
+		case *dns.NS:
+			job.Results = append(job.Results, record.Ns)
 		}
 	}
 
 	return
+}
+
+func exchange(msg *dns.Msg, conn *dns.Conn) (*dns.Msg, time.Duration, error) {
+	if conn == nil {
+		return dnsClient.Exchange(msg, dnsServerPort)
+	} else {
+		return dnsClient.ExchangeWithConn(msg, conn)
+	}
 }

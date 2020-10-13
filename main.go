@@ -10,8 +10,9 @@ import (
 	"net"
 	"os"
 	"runtime"
-	"strings"
 	"time"
+	"sync"
+	"strings"
 )
 
 var (
@@ -20,14 +21,20 @@ var (
 	done          = make(chan bool)
 	workersCount  = 32
 	appendDot     = true
-	dnsServer     = "8.8.8.8"
+	packetsPerSecond = 100
+	sendingDelay  = 10 * time.Millisecond
+	sendLock      = sync.Mutex{}
+	dnsServer     = "1.1.1.1"
 	dnsPort       = "53"
+	useTcp        = false       
+	formatJson    = false
 	dnsServerPort = ""
 	dnsClient     = &dns.Client{}
 	dnsTypes      = map[string]uint16{
 		"MX":   dns.TypeMX,
 		"A":    dns.TypeA,
 		"AAAA": dns.TypeAAAA,
+		"NS": dns.TypeNS,
 	}
 )
 
@@ -35,6 +42,10 @@ func main() {
 	flag.StringVar(&dnsServer, "server", dnsServer, "The resolver to ask")
 	flag.IntVar(&workersCount, "workers", workersCount, "Number of worker routines")
 	flag.BoolVar(&appendDot, "append-dot", appendDot, "Append missing dot to domains")
+	flag.IntVar(&packetsPerSecond, "pps", 100,
+		"Send up to PPS DNS queries per second")
+	flag.BoolVar(&formatJson, "json", formatJson, "Return as JSON instead")
+	flag.BoolVar(&useTcp, "tcp", useTcp, "Use TCP instead")
 	timeout := flag.Int("timeout", 5, "Timeout for a query in seconds")
 	flag.Parse()
 
@@ -52,19 +63,26 @@ func main() {
 	if len(queryTypes) == 0 {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] TYPE\n\nOptions:\n", os.Args[0])
 		flag.PrintDefaults()
-		fmt.Fprintln(os.Stderr, "\nType can be A, AAAA, MX\n")
+		fmt.Fprintln(os.Stderr, "\nType can be A, AAAA, MX, NS\n")
 		fmt.Fprintf(os.Stderr, "Example: echo example.com. | %s A AAAA\n", os.Args[0])
 		os.Exit(1)
 	}
 
+	sendingDelay  = time.Duration(1000000000/packetsPerSecond) * time.Nanosecond
 	dnsServerPort = net.JoinHostPort(dnsServer, dnsPort)
-	dnsClient.ReadTimeout = time.Duration(*timeout) * time.Second
+	if useTcp {
+		dnsClient.ReadTimeout = 30 * time.Second
+	} else {
+		dnsClient.ReadTimeout = time.Duration(*timeout) * time.Second
+	}
+	
 
 	// Use all cores
 	cpuCount := runtime.NumCPU()
 	runtime.GOMAXPROCS(cpuCount)
-	log.Println("Using", cpuCount, "threads")
-	log.Println("Starting", workersCount, "workers")
+	fmt.Fprintln(os.Stderr, "Hi Sergi, GO LAKERS!")
+	fmt.Fprintln(os.Stderr, "Using", cpuCount, "threads")
+	fmt.Fprintln(os.Stderr, "Starting", workersCount, "workers")
 
 	// Start result writer
 	go resultWriter()
@@ -81,22 +99,34 @@ func main() {
 }
 
 func createJobs() {
+	id := 0
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		domain := scanner.Text()
 		if appendDot && !strings.HasSuffix(domain, ".") {
 			domain = fmt.Sprintf("%s.", domain)
 		}
-		pending <- &Job{Domain: domain}
+		id += 1
+		pending <- &Job{Id: id, Domain: domain}
 	}
 	close(pending)
 }
 
 func worker(queryTypes []uint16) {
+	var conn *dns.Conn
+	if useTcp {
+		c, err := dnsClient.Dial(dnsServerPort)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to open connection", err)
+		}
+
+		conn = c 
+	}
+
 	for {
 		job := <-pending
 		if job != nil {
-			executeJob(job, queryTypes)
+			executeJob(job, queryTypes, &conn)
 			finished <- job
 		} else {
 			// no more jobs to do
@@ -107,14 +137,21 @@ func worker(queryTypes []uint16) {
 	}
 }
 
-func executeJob(job *Job, queryTypes []uint16) {
+func executeJob(job *Job, queryTypes []uint16, conn **dns.Conn) {
 	for _, q := range queryTypes {
-		if err := lookup(job, q); err != nil {
-			log.Printf("%s: %s", job.Domain, err)
+		ratelimit()
+		if err := lookup(job, q, conn); err != nil {
+			log.Printf("%s: %s\n", job.Domain, err)
 			job.Error = err.Error()
 			return
 		}
 	}
+}
+
+func ratelimit() {
+	sendLock.Lock()
+	time.Sleep(sendingDelay)
+	sendLock.Unlock()
 }
 
 func resultWriter() {
@@ -125,11 +162,15 @@ func resultWriter() {
 			doneCount++
 		} else {
 			// Serialize and print result
-			b, err := json.Marshal(job)
-			if err != nil {
-				panic(err)
+			if formatJson {
+				b, err := json.Marshal(job)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println(string(b))
+			} else {
+				fmt.Printf("%d,%s,%s\n", job.Id, job.Domain, strings.Join(job.Results, ","))
 			}
-			fmt.Println(string(b))
 		}
 
 	}
